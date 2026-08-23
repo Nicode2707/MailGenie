@@ -1,0 +1,4 @@
+type Query {
+    # Epic 10 GraphQL integration scaffolding
+    ping: String
+}
