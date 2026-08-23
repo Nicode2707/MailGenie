@@ -1,0 +1,33 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: mailgenie
+    ports:
+      - "5432:5432"
+
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+
+  backend:
+    build:
+      context: ./Backend/email-writer-s
+    ports:
+      - "8080:8080"
+    depends_on:
+      - db
+      - redis
+
+  frontend:
+    build:
+      context: ./frontend/EmailwriterGenerator
+    ports:
+      - "5173:80"
+    depends_on:
+      - backend
