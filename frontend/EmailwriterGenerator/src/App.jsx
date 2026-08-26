@@ -12,6 +12,7 @@ import DatabaseMigrationDashboard from './components/DatabaseMigrationDashboard'
 import QuotaManagementDashboard from './components/QuotaManagementDashboard';
 import EnterpriseTelemetryDashboard from './components/EnterpriseTelemetryDashboard';
 import ContextAwareTemplateList from './components/ContextAwareTemplateList';
+import EmailABTestDashboard from './components/EmailABTestDashboard';
 
 import {
   Box,
@@ -464,6 +465,7 @@ function App() {
     { id: 'context_templates', label: '🧠 Context Templates', icon: '🧠' },
     { id: 'analytics', label: '📊 Usage Analytics', icon: '📈' },
     { id: 'telemetry', label: '🚀 Enterprise Telemetry', icon: '🚀' },
+    { id: 'abtest', label: '⚡ A/B Split Tests', icon: '⚡' },
     { id: 'settings', label: '⚙️ Settings', icon: '⚙️' }
   ];
 
@@ -1301,6 +1303,11 @@ Custom Directives: ${studioCustomInstruction || 'None'}
                   </Grid>
                 </Grid>
               </Box>
+            )}
+
+            {/* TAB: A/B SPLIT TESTS */}
+            {activeTab === 'abtest' && (
+              <EmailABTestDashboard backendUrl={backendUrl} />
             )}
 
             {/* TAB: SETTINGS */}
