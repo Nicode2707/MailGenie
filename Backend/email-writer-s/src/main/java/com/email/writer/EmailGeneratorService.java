@@ -8,11 +8,15 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.List;
 import java.util.Map;
+import java.util.HashMap;
+import java.util.Iterator;
 
 @Service
 public class EmailGeneratorService {
 
     private final WebClient webClient;
+    private final HtmlTemplateRepository htmlTemplateRepository;
+    private final CustomTemplateEngine customTemplateEngine;
 
     @Value("${groq.api.url:https://api.groq.com/openai/v1/chat/completions}")
     private String groqApiUrl;
@@ -38,8 +42,10 @@ public class EmailGeneratorService {
     @Value("${anthropic.api.key:}")
     private String anthropicApiKey;
 
-    public EmailGeneratorService(WebClient.Builder webClientBuilder) {
+    public EmailGeneratorService(WebClient.Builder webClientBuilder, HtmlTemplateRepository htmlTemplateRepository, CustomTemplateEngine customTemplateEngine) {
         this.webClient = webClientBuilder.build();
+        this.htmlTemplateRepository = htmlTemplateRepository;
+        this.customTemplateEngine = customTemplateEngine;
     }
 
     public java.util.concurrent.CompletableFuture<String> generateEmailReplyAsync(EmailRequest emailRequest) {
@@ -162,7 +168,34 @@ public class EmailGeneratorService {
                     new org.springframework.web.server.ResponseStatusException(
                         org.springframework.http.HttpStatus.INTERNAL_SERVER_ERROR,
                         "Unexpected error calling " + finalProvider.toUpperCase() + " API: " + e.getMessage(), e))
-                .toFuture();
+                .toFuture()
+                .thenApply(response -> {
+                    if (emailRequest.getTemplateId() != null && !emailRequest.getTemplateId().trim().isEmpty()) {
+                        return applyTemplate(response, emailRequest.getTemplateId());
+                    }
+                    return response;
+                });
+    }
+
+    private String applyTemplate(String jsonResponse, String templateName) {
+        try {
+            HtmlTemplate template = htmlTemplateRepository.findByName(templateName)
+                    .orElseThrow(() -> new RuntimeException("Template not found: " + templateName));
+            
+            ObjectMapper mapper = new ObjectMapper();
+            JsonNode rootNode = mapper.readTree(jsonResponse);
+            
+            Map<String, String> variables = new HashMap<>();
+            Iterator<Map.Entry<String, JsonNode>> fields = rootNode.fields();
+            while (fields.hasNext()) {
+                Map.Entry<String, JsonNode> field = fields.next();
+                variables.put(field.getKey(), field.getValue().asText());
+            }
+            
+            return customTemplateEngine.compile(template.getContent(), variables);
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to apply template: " + e.getMessage(), e);
+        }
     }
 
     public String generateEmailSummary(EmailSummarizeRequest request) {
@@ -256,7 +289,9 @@ public class EmailGeneratorService {
 
     String buildPrompt(EmailRequest emailRequest) {
         StringBuilder prompt = new StringBuilder();
-        if (emailRequest.isComposeMode()) {
+        if (emailRequest.getTemplateId() != null && !emailRequest.getTemplateId().trim().isEmpty()) {
+            prompt.append("Respond strictly in valid JSON format. Provide the following fields: 'greeting', 'pitch', and 'closing'. Do not include any markdown formatting or explanations. ");
+        } else if (emailRequest.isComposeMode()) {
             prompt.append("Write a complete email based on the following instructions. ");
             prompt.append("Respond ONLY with the email body text. Do not include any subject lines, conversational prefixes, intros, explanations, or outros. The output must be ready to insert directly into the composer. ");
         } else {

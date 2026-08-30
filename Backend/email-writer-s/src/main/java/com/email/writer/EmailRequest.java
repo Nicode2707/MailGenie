@@ -15,4 +15,5 @@ public class EmailRequest {
     private java.util.Map<String, String> templateVariables; // Dynamic variables for template interpolation
     private boolean composeMode; // true if writing a new email, false/default if generating a reply
     private int variantsCount = 1; // Default to 1 variant
+    private String templateId; // Used for structured JSON templates
 }
