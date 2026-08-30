@@ -15,9 +15,10 @@ public class CampaignAggregationJob {
     // Run every day at midnight (or frequently for testing)
     // Here we'll configure it to run every hour for aggregation
     @Scheduled(cron = "0 0 * * * *")
+    @org.springframework.transaction.annotation.Transactional
     public void aggregateAndDeclareWinners() {
-        // Fetch running campaigns
-        List<EmailCampaign> activeCampaigns = campaignRepository.findByStatus("RUNNING");
+        // Fetch running campaigns with pessimistic write lock to prevent concurrent aggregation
+        List<EmailCampaign> activeCampaigns = campaignRepository.findRunningCampaignsWithLock();
         
         for (EmailCampaign campaign : activeCampaigns) {
             if (campaign.isTestPeriodComplete() || campaign.hasMinimumSampleSize()) {

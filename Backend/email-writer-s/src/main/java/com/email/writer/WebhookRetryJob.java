@@ -17,6 +17,7 @@ public class WebhookRetryJob {
 
     // Run every minute
     @Scheduled(fixedDelay = 60000)
+    @org.springframework.transaction.annotation.Transactional
     public void processPendingWebhooks() {
         List<WebhookEvent> events = webhookEventRepository.findEventsToProcess(LocalDateTime.now());
         
