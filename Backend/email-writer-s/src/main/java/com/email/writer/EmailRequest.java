@@ -14,4 +14,5 @@ public class EmailRequest {
     private String customInstructions; // Optional user custom prompt or template instructions
     private java.util.Map<String, String> templateVariables; // Dynamic variables for template interpolation
     private boolean composeMode; // true if writing a new email, false/default if generating a reply
+    private int variantsCount = 1; // Default to 1 variant
 }
