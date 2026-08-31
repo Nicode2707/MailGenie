@@ -165,6 +165,47 @@ public class EmailGeneratorService {
                 .toFuture();
     }
 
+    public String generateEmailSummary(EmailSummarizeRequest request) {
+        EmailRequest dummyRequest = new EmailRequest();
+        dummyRequest.setProvider(request.getProvider());
+        dummyRequest.setApiKey(request.getApiKey());
+        dummyRequest.setModel(request.getModel());
+        
+        // Temporarily override the buildPrompt logic by building it inline for summarization
+        String prompt = "You are an intelligent email summarization assistant. Summarize the following email thread concisely, extracting key action items and decisions:\n\n" + request.getThreadContent();
+        
+        try {
+            // We use generateEmailReplyAsync but we need to inject our custom prompt.
+            // Since buildPrompt is called inside generateEmailReplyAsync, it's easier to duplicate the WebClient call logic here or modify buildPrompt.
+            // To keep it simple, we'll construct a direct API call here.
+            
+            String provider = request.getProvider() != null ? request.getProvider().toLowerCase() : "groq";
+            String apiUrl = groqApiUrl;
+            String apiKey = (request.getApiKey() != null && !request.getApiKey().isEmpty()) ? request.getApiKey() : groqApiKey;
+            String model = "llama-3.3-70b-versatile";
+
+            if ("openai".equals(provider)) { apiUrl = openaiApiUrl; apiKey = openaiApiKey; model = "gpt-4o-mini"; }
+            if ("gemini".equals(provider)) { apiUrl = geminiApiUrl; apiKey = geminiApiKey; model = "gemini-2.5-flash"; }
+            
+            Map<String, Object> requestBody = Map.of(
+                    "model", model,
+                    "messages", List.of(Map.of("role", "user", "content", prompt))
+            );
+
+            return webClient.post()
+                    .uri(apiUrl)
+                    .header("Content-Type", "application/json")
+                    .header("Authorization", "Bearer " + apiKey)
+                    .bodyValue(requestBody)
+                    .retrieve()
+                    .bodyToMono(String.class)
+                    .map(response -> extractResponseContent(response, provider))
+                    .block();
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to generate summary: " + e.getMessage(), e);
+        }
+    }
+
     public String generateEmailReply(EmailRequest emailRequest) {
         try {
             return generateEmailReplyAsync(emailRequest).join();
