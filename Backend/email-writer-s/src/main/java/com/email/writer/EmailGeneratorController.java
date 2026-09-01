@@ -15,6 +15,8 @@ public class EmailGeneratorController {
     private final EmailHistoryService emailHistoryService;
     private final ApiRequestMetricService apiRequestMetricService;
     private final TelemetryService telemetryService;
+    private final EmailCampaignRepository emailCampaignRepository;
+    private final CampaignVariantRepository campaignVariantRepository;
 
     @PostMapping("/generate")
     public java.util.concurrent.CompletableFuture<ResponseEntity<String>> generateEmail(@RequestBody EmailRequest emailRequest) {
@@ -78,6 +80,32 @@ public class EmailGeneratorController {
                                 .language(resolvedLanguage)
                                 .build();
                         emailHistoryService.saveHistory(history);
+
+                        // If A/B Testing Variants are requested
+                        if (emailRequest.getVariantsCount() > 1) {
+                            EmailCampaign campaign = EmailCampaign.builder()
+                                    .name("A/B Test Campaign")
+                                    .campaignType("AB_TEST")
+                                    .status("RUNNING")
+                                    .variantCount(emailRequest.getVariantsCount())
+                                    .build();
+                            emailCampaignRepository.save(campaign);
+
+                            // Mock saving variants
+                            for (int i = 0; i < emailRequest.getVariantsCount(); i++) {
+                                CampaignVariant variant = CampaignVariant.builder()
+                                        .campaignId(campaign.getId())
+                                        .variantName("Variant " + (i + 1))
+                                        .subjectLine(emailRequest.getSubject() != null ? emailRequest.getSubject() : "Test Subject")
+                                        .content(response) // Simply reusing response for POC
+                                        .sentCount(0)
+                                        .openCount(0)
+                                        .clickCount(0)
+                                        .status("ACTIVE")
+                                        .build();
+                                campaignVariantRepository.save(variant);
+                            }
+                        }
                     }
 
                     return ResponseEntity.ok(response);

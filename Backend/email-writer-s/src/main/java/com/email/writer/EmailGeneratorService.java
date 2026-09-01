@@ -8,11 +8,15 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.List;
 import java.util.Map;
+import java.util.HashMap;
+import java.util.Iterator;
 
 @Service
 public class EmailGeneratorService {
 
     private final WebClient webClient;
+    private final HtmlTemplateRepository htmlTemplateRepository;
+    private final CustomTemplateEngine customTemplateEngine;
 
     @Value("${groq.api.url:https://api.groq.com/openai/v1/chat/completions}")
     private String groqApiUrl;
@@ -38,8 +42,10 @@ public class EmailGeneratorService {
     @Value("${anthropic.api.key:}")
     private String anthropicApiKey;
 
-    public EmailGeneratorService(WebClient.Builder webClientBuilder) {
+    public EmailGeneratorService(WebClient.Builder webClientBuilder, HtmlTemplateRepository htmlTemplateRepository, CustomTemplateEngine customTemplateEngine) {
         this.webClient = webClientBuilder.build();
+        this.htmlTemplateRepository = htmlTemplateRepository;
+        this.customTemplateEngine = customTemplateEngine;
     }
 
     public java.util.concurrent.CompletableFuture<String> generateEmailReplyAsync(EmailRequest emailRequest) {
@@ -162,7 +168,75 @@ public class EmailGeneratorService {
                     new org.springframework.web.server.ResponseStatusException(
                         org.springframework.http.HttpStatus.INTERNAL_SERVER_ERROR,
                         "Unexpected error calling " + finalProvider.toUpperCase() + " API: " + e.getMessage(), e))
-                .toFuture();
+                .toFuture()
+                .thenApply(response -> {
+                    if (emailRequest.getTemplateId() != null && !emailRequest.getTemplateId().trim().isEmpty()) {
+                        return applyTemplate(response, emailRequest.getTemplateId());
+                    }
+                    return response;
+                });
+    }
+
+    private String applyTemplate(String jsonResponse, String templateName) {
+        try {
+            HtmlTemplate template = htmlTemplateRepository.findByName(templateName)
+                    .orElseThrow(() -> new RuntimeException("Template not found: " + templateName));
+            
+            ObjectMapper mapper = new ObjectMapper();
+            JsonNode rootNode = mapper.readTree(jsonResponse);
+            
+            Map<String, String> variables = new HashMap<>();
+            Iterator<Map.Entry<String, JsonNode>> fields = rootNode.fields();
+            while (fields.hasNext()) {
+                Map.Entry<String, JsonNode> field = fields.next();
+                variables.put(field.getKey(), field.getValue().asText());
+            }
+            
+            return customTemplateEngine.compile(template.getContent(), variables);
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to apply template: " + e.getMessage(), e);
+        }
+    }
+
+    public String generateEmailSummary(EmailSummarizeRequest request) {
+        EmailRequest dummyRequest = new EmailRequest();
+        dummyRequest.setProvider(request.getProvider());
+        dummyRequest.setApiKey(request.getApiKey());
+        dummyRequest.setModel(request.getModel());
+        
+        // Temporarily override the buildPrompt logic by building it inline for summarization
+        String prompt = "You are an intelligent email summarization assistant. Summarize the following email thread concisely, extracting key action items and decisions:\n\n" + request.getThreadContent();
+        
+        try {
+            // We use generateEmailReplyAsync but we need to inject our custom prompt.
+            // Since buildPrompt is called inside generateEmailReplyAsync, it's easier to duplicate the WebClient call logic here or modify buildPrompt.
+            // To keep it simple, we'll construct a direct API call here.
+            
+            String provider = request.getProvider() != null ? request.getProvider().toLowerCase() : "groq";
+            String apiUrl = groqApiUrl;
+            String apiKey = (request.getApiKey() != null && !request.getApiKey().isEmpty()) ? request.getApiKey() : groqApiKey;
+            String model = "llama-3.3-70b-versatile";
+
+            if ("openai".equals(provider)) { apiUrl = openaiApiUrl; apiKey = openaiApiKey; model = "gpt-4o-mini"; }
+            if ("gemini".equals(provider)) { apiUrl = geminiApiUrl; apiKey = geminiApiKey; model = "gemini-2.5-flash"; }
+            
+            Map<String, Object> requestBody = Map.of(
+                    "model", model,
+                    "messages", List.of(Map.of("role", "user", "content", prompt))
+            );
+
+            return webClient.post()
+                    .uri(apiUrl)
+                    .header("Content-Type", "application/json")
+                    .header("Authorization", "Bearer " + apiKey)
+                    .bodyValue(requestBody)
+                    .retrieve()
+                    .bodyToMono(String.class)
+                    .map(response -> extractResponseContent(response, provider))
+                    .block();
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to generate summary: " + e.getMessage(), e);
+        }
     }
 
     public String generateEmailSummary(EmailSummarizeRequest request) {
@@ -256,7 +330,9 @@ public class EmailGeneratorService {
 
     String buildPrompt(EmailRequest emailRequest) {
         StringBuilder prompt = new StringBuilder();
-        if (emailRequest.isComposeMode()) {
+        if (emailRequest.getTemplateId() != null && !emailRequest.getTemplateId().trim().isEmpty()) {
+            prompt.append("Respond strictly in valid JSON format. Provide the following fields: 'greeting', 'pitch', and 'closing'. Do not include any markdown formatting or explanations. ");
+        } else if (emailRequest.isComposeMode()) {
             prompt.append("Write a complete email based on the following instructions. ");
             prompt.append("Respond ONLY with the email body text. Do not include any subject lines, conversational prefixes, intros, explanations, or outros. The output must be ready to insert directly into the composer. ");
         } else {

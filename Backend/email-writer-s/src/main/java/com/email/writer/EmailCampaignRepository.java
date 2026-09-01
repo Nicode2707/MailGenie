@@ -2,8 +2,10 @@ package com.email.writer;
 
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
+import jakarta.persistence.LockModeType;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -15,6 +17,12 @@ import java.util.List;
 public interface EmailCampaignRepository extends JpaRepository<EmailCampaign, Long> {
 
     List<EmailCampaign> findByStatusOrderByCreatedAtDesc(String status);
+    
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT c FROM EmailCampaign c WHERE c.status = 'RUNNING'")
+    List<EmailCampaign> findRunningCampaignsWithLock();
+
+    List<EmailCampaign> findByStatus(String status);
 
     List<EmailCampaign> findByCampaignTypeOrderByCreatedAtDesc(String type);
 
