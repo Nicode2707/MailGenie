@@ -56,8 +56,9 @@ const EmailABTestDashboard = ({ backendUrl = 'http://localhost:8080' }) => {
 
   const handleCreateCampaign = async () => {
     if (!campaignName.trim()) return;
-    const valid = variants.filter(v => v.bodyContent.trim());
-    if (valid.length < 2) { setToast({ open: true, message: 'At least 2 variants required', severity: 'warning' }); return; }
+    const requiredField = testType === 'subject_line' ? 'subjectLine' : 'bodyContent';
+    const valid = variants.filter(v => (v?.[requiredField] || '').trim());
+    if (valid.length < 2) { setToast({ open: true, message: `At least 2 variants with ${requiredField === 'subjectLine' ? 'a subject line' : 'body content'} required`, severity: 'warning' }); return; }
     setSubmitting(true);
     try {
       const result = await api('POST', '/api/ab-test/campaigns', { campaignName, testType, variants: valid });
