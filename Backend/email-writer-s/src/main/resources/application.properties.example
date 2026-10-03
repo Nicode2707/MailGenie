@@ -29,5 +29,5 @@ spring.jpa.show-sql=true
 spring.jpa.properties.hibernate.format_sql=true
 
 # Enable H2 console at /h2-console
-spring.h2.console.enabled=true
+spring.h2.console.enabled=false
 spring.h2.console.path=/h2-console

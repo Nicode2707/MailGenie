@@ -11,8 +11,12 @@ import SecurityPage from './pages/SecurityPage';
 import DatabaseMigrationDashboard from './components/DatabaseMigrationDashboard';
 import QuotaManagementDashboard from './components/QuotaManagementDashboard';
 import EnterpriseTelemetryDashboard from './components/EnterpriseTelemetryDashboard';
+import ABTestingAnalytics from './components/ABTestingAnalytics';
 import ContextAwareTemplateList from './components/ContextAwareTemplateList';
-import EmailContentIntelligenceDashboard from './components/EmailContentIntelligenceDashboard';
+import SubscriberIntelligenceHub from './components/SubscriberIntelligenceHub';
+import DeliverabilityMonitor from './components/DeliverabilityMonitor';
+import WorkflowAutomationBuilder from './components/WorkflowAutomationBuilder';
+import EmailQualityAnalyzerDashboard from './components/EmailQualityAnalyzerDashboard';
 
 import {
   Box,
@@ -50,78 +54,76 @@ import {
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
 import axios from 'axios';
+import useStore from './store/useStore';
 
 // Sidebar Drawer Width
 const drawerWidth = 270;
 
 function App() {
-  const [isDarkMode, setIsDarkMode] = useState(() => {
-    const saved = localStorage.getItem('theme');
-    return saved === 'dark' || (!saved && window.matchMedia('(prefers-color-scheme: dark)').matches);
-  });
+  const {
+    isDarkMode,
+    toggleTheme,
+    setIsDarkMode,
+    activeTab,
+    setActiveTab,
+    mobileOpen,
+    setMobileOpen,
+    toast,
+    showToast,
+    closeToast,
+    backendUrl,
+    setBackendUrl,
+    backendOnline,
+    setBackendOnline,
+    provider,
+    setProvider,
+    model,
+    setModel,
+    tone,
+    setTone,
+    language,
+    setLanguage,
+    providerConfig,
+    setProviderConfig,
+    customTemplates,
+    setCustomTemplates,
+    historyList,
+    setHistoryList,
+    searchTerm,
+    setSearchTerm,
+    compareMode,
+    setCompareMode,
+    compareReplies,
+    setCompareReplies,
+    compareLoading,
+    setCompareLoading,
+    studioFormality,
+    setStudioFormality,
+    studioLength,
+    setStudioLength,
+    studioSignature,
+    setStudioSignature,
+    studioSalutation,
+    setStudioSalutation,
+    studioCustomInstruction,
+    setStudioCustomInstruction
+  } = useStore();
 
-  // Navigation tab state
-  const [activeTab, setActiveTab] = useState('generator');
-
-  // Backend connection state
-  const [backendUrl, setBackendUrl] = useState(() => {
-    return localStorage.getItem('mailgenie_backend_url') || 'http://localhost:8080';
-  });
-  const [backendOnline, setBackendOnline] = useState(false);
-
-  // Email generator states
+  // Local generation states
   const [emailContent, setEmailContent] = useState('');
-  const [tone, setTone] = useState('');
-  const [provider, setProvider] = useState('groq');
-  const [model, setModel] = useState('');
-  const [language, setLanguage] = useState('English');
   const [generatedReply, setGeneratedReply] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
 
-  // Multi-Tone Compare Mode
-  const [compareMode, setCompareMode] = useState(false);
-  const [compareReplies, setCompareReplies] = useState({
-    professional: '',
-    casual: '',
-    persuasive: ''
-  });
-  const [compareLoading, setCompareLoading] = useState(false);
-
-  // Prompt Studio Preset States
-  const [studioFormality, setStudioFormality] = useState(70);
-  const [studioLength, setStudioLength] = useState('medium');
-  const [studioSignature, setStudioSignature] = useState('Best regards,\n[Your Name]');
-  const [studioSalutation, setStudioSalutation] = useState('Dear [Name],');
-  const [studioCustomInstruction, setStudioCustomInstruction] = useState('');
-
-  // Toast Notification state
-  const [toast, setToast] = useState({ open: false, message: '', severity: 'info' });
-
-  // History and config states
-  const [historyList, setHistoryList] = useState([]);
+  // Local edit states
   const [editingId, setEditingId] = useState(null);
   const [tempComment, setTempComment] = useState('');
-  const [searchTerm, setSearchTerm] = useState('');
-  const [providerConfig, setProviderConfig] = useState({ groq: false, openai: false, gemini: false, claude: false });
-
-  // Custom and preset templates
-  const [customTemplates, setCustomTemplates] = useState(() => {
-    const saved = localStorage.getItem('mailgenie_custom_templates');
-    return saved ? JSON.parse(saved) : [
-      { id: 'p1', title: '💼 Professional Follow-up', body: 'Dear [Name],\n\nI wanted to follow up on our discussion regarding [Topic]. Please let me know if you have had a chance to review the details.\n\nBest regards,\n[Your Name]' },
-      { id: 'p2', title: '📅 Schedule Meeting', body: 'Hi [Name],\n\nI would love to schedule a quick 15-minute call to align on our next steps. Please let me know your availability this week.\n\nThanks,\n[Your Name]' },
-      { id: 'p3', title: '☕ Casual Check-in', body: 'Hey [Name],\n\nHope you are doing well! Just wanted to check in and see how things are going with [Project]. Let me know when you are free to catch up.\n\nCheers,\n[Your Name]' }
-    ];
-  });
-
   const [newTemplateTitle, setNewTemplateTitle] = useState('');
   const [newTemplateBody, setNewTemplateBody] = useState('');
 
   // Mobile responsiveness
   const isMobile = useMediaQuery('(max-width: 900px)');
-  const [mobileOpen, setMobileOpen] = useState(false);
 
   // Material UI Custom Theme
   const theme = createTheme({
@@ -150,16 +152,6 @@ function App() {
       h6: { fontFamily: "'Outfit', sans-serif", fontWeight: 600 },
     },
   });
-
-  // Toggle Dark Mode
-  const toggleTheme = () => {
-    setIsDarkMode(prev => {
-      const newVal = !prev;
-      localStorage.setItem('theme', newVal ? 'dark' : 'light');
-      document.documentElement.setAttribute('data-theme', newVal ? 'dark' : 'light');
-      return newVal;
-    });
-  };
 
   // Sync theme and data on mount / backendUrl change
   useEffect(() => {
@@ -201,12 +193,11 @@ function App() {
   };
 
   const showNotification = (message, severity = 'info') => {
-    setToast({ open: true, message, severity });
+    showToast(message, severity);
   };
 
   const handleBackendUrlChange = (newUrl) => {
     setBackendUrl(newUrl);
-    localStorage.setItem('mailgenie_backend_url', newUrl);
   };
 
   // Generate Single AI Reply
@@ -463,9 +454,13 @@ function App() {
     { id: 'migrations', label: '🗄️ DB Migrations', icon: '🗄️' },
     { id: 'quotas', label: '🎛️ Quota Policies', icon: '🎛️' },
     { id: 'context_templates', label: '🧠 Context Templates', icon: '🧠' },
+    { id: 'subscriber_hub', label: '📊 Subscriber Hub', icon: '📊' },
+    { id: 'deliverability', label: '📧 Deliverability', icon: '📬' },
+    { id: 'workflow_automation', label: '⚡ Workflows', icon: '⚡' },
+    { id: 'ab_testing', label: '🧪 A/B Testing', icon: '🧪' },
     { id: 'analytics', label: '📊 Usage Analytics', icon: '📈' },
     { id: 'telemetry', label: '🚀 Enterprise Telemetry', icon: '🚀' },
-    { id: 'intelligence', label: '🧠 Content Intelligence', icon: '🧠' },
+    { id: 'quality', label: '📊 Quality Analyzer', icon: '📊' },
     { id: 'settings', label: '⚙️ Settings', icon: '⚙️' }
   ];
 
@@ -1305,9 +1300,9 @@ Custom Directives: ${studioCustomInstruction || 'None'}
               </Box>
             )}
 
-            {/* TAB: CONTENT INTELLIGENCE */}
-            {activeTab === 'intelligence' && (
-              <EmailContentIntelligenceDashboard backendUrl={backendUrl} />
+            {/* TAB: QUALITY ANALYZER */}
+            {activeTab === 'quality' && (
+              <EmailQualityAnalyzerDashboard backendUrl={backendUrl} />
             )}
 
             {/* TAB: SETTINGS */}
@@ -1410,6 +1405,22 @@ Custom Directives: ${studioCustomInstruction || 'None'}
               <ContextAwareTemplateList />
             )}
 
+            {activeTab === 'subscriber_hub' && (
+              <SubscriberIntelligenceHub />
+            )}
+
+            {activeTab === 'deliverability' && (
+              <DeliverabilityMonitor />
+            )}
+
+            {activeTab === 'workflow_automation' && (
+              <WorkflowAutomationBuilder />
+            )}
+
+            {activeTab === 'ab_testing' && (
+              <ABTestingAnalytics />
+            )}
+
             {activeTab === 'about' && (
               <AboutPage onBack={() => setActiveTab('generator')} />
             )}
@@ -1463,11 +1474,11 @@ Custom Directives: ${studioCustomInstruction || 'None'}
       <Snackbar
         open={toast.open}
         autoHideDuration={3500}
-        onClose={() => setToast(prev => ({ ...prev, open: false }))}
+        onClose={closeToast}
         anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
       >
         <Alert
-          onClose={() => setToast(prev => ({ ...prev, open: false }))}
+          onClose={closeToast}
           severity={toast.severity}
           variant="filled"
           sx={{ width: '100%', borderRadius: 3, fontWeight: 600 }}
