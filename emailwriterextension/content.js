@@ -395,6 +395,53 @@ console.log("MailGenie Extension - Content Script Loaded v2.1");
     return '';
   }
 
+  // Extract email subject line context
+  function getSubjectContent(composeContainer) {
+    const subjectSelectors = [
+      'input[name="subjectbox"]',
+      'input[name="subject"]',
+      'div[aria-label="Subject"]',
+      'div[aria-label*="Subject"]',
+      'input[placeholder="Subject"]',
+      'input[placeholder*="Subject"]',
+      'h2.hP'
+    ];
+
+    if (composeContainer) {
+      for (const sel of subjectSelectors) {
+        const el = composeContainer.querySelector(sel);
+        if (el) {
+          const val = el.value || el.innerText || el.textContent;
+          if (val && val.trim()) return val.trim();
+        }
+      }
+
+      const root = composeContainer.closest('[role="dialog"]') ||
+                   composeContainer.closest('form') ||
+                   composeContainer.closest('.g3') ||
+                   composeContainer.closest('.dw') ||
+                   composeContainer.closest('.nH');
+      if (root) {
+        for (const sel of subjectSelectors) {
+          const el = root.querySelector(sel);
+          if (el) {
+            const val = el.value || el.innerText || el.textContent;
+            if (val && val.trim()) return val.trim();
+          }
+        }
+      }
+    }
+
+    for (const sel of subjectSelectors) {
+      const el = document.querySelector(sel);
+      if (el) {
+        const val = el.value || el.innerText || el.textContent;
+        if (val && val.trim()) return val.trim();
+      }
+    }
+    return '';
+  }
+
   function cleanEmailText(text) {
     if (!text) return '';
     let cleaned = text.trim();
@@ -403,6 +450,20 @@ console.log("MailGenie Extension - Content Script Loaded v2.1");
       cleaned = cleaned.substring(0, splitIdx);
     }
     return cleaned.trim();
+  }
+
+  // Client-side Template Variable Replacer
+  function replaceTemplateVariables(template, variables = {}) {
+    if (!template) return '';
+    let result = template;
+    for (const [key, value] of Object.entries(variables)) {
+      if (!key) continue;
+      const mustacheRegex = new RegExp(`\\{\\{\\s*${key}\\s*\\}\\}`, 'gi');
+      const bracketRegex = new RegExp(`\\[\\s*${key}\\s*\\]`, 'gi');
+      const val = value != null ? value : '';
+      result = result.replace(mustacheRegex, val).replace(bracketRegex, val);
+    }
+    return result;
   }
 
   // Locate compose window roots
@@ -534,7 +595,9 @@ console.log("MailGenie Extension - Content Script Loaded v2.1");
       // Core Generation Handler
       const executeGeneration = async (customPrompt = '') => {
         const emailContent = getEmailContent(container);
-        if (!emailContent && !customPrompt) {
+        const emailSubject = getSubjectContent(container);
+
+        if (!emailContent && !customPrompt && !emailSubject) {
           showToast('Could not find email thread content to reply to', 'error');
           return;
         }
@@ -559,7 +622,8 @@ console.log("MailGenie Extension - Content Script Loaded v2.1");
           const bgResponse = await sendMessageToWorker({
             action: 'GENERATE_EMAIL',
             backendUrl: settings.backendUrl,
-            emailContent: emailContent || 'Generate email based on custom instructions',
+            emailContent: emailContent || (emailSubject ? `Regarding email subject: ${emailSubject}` : 'Generate email based on custom instructions'),
+            subject: emailSubject,
             tone: selectedTone,
             provider: settings.provider,
             model: settings.customModel,
@@ -568,15 +632,16 @@ console.log("MailGenie Extension - Content Script Loaded v2.1");
             customInstructions: customPrompt
           });
 
-          if (bgResponse && bgResponse.success && bgResponse.data) {
-            responseData = bgResponse.data;
+          if (bgResponse && bgResponse.success && (bgResponse.data || bgResponse.reply)) {
+            responseData = bgResponse.data || bgResponse.reply;
           } else {
             // Direct fetch fallback
             const res = await fetch(`${settings.backendUrl.replace(/\/$/, '')}/api/email/generate`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
-                emailContent: emailContent || 'Generate email based on custom instructions',
+                emailContent: emailContent || (emailSubject ? `Regarding email subject: ${emailSubject}` : 'Generate email based on custom instructions'),
+                subject: emailSubject,
                 tone: selectedTone,
                 provider: settings.provider,
                 model: settings.customModel,

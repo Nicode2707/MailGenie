@@ -50,4 +50,12 @@ public class EmailTemplateService {
         }
         return false;
     }
+
+    /**
+     * Renders a template by ID with variable interpolation.
+     */
+    public Optional<String> renderTemplate(Long id, java.util.Map<String, String> variables) {
+        return repository.findById(id)
+                .map(t -> com.email.writer.util.TemplateVariableReplacer.replaceVariables(t.getBody(), variables));
+    }
 }
