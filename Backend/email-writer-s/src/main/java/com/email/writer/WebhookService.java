@@ -40,7 +40,7 @@ public class WebhookService {
     }
 
     public List<WebhookDeliveryLog> getDeliveryLogs() {
-        return logRepository.findAllByOrderByExecutedAtDesc();
+        return logRepository.findAllByOrderByCreatedAtDesc();
     }
 
     public Map<String, Object> getWebhookStats() {
@@ -49,9 +49,9 @@ public class WebhookService {
 
         long activeSubs = subs.stream().filter(WebhookSubscription::getIsActive).count();
         long totalDispatched = logs.size();
-        long failedDeliveries = logs.stream().filter(l -> "FAILED".equals(l.getDeliveryStatus())).count();
+        long failedDeliveries = logs.stream().filter(l -> "FAILED".equals(l.getStatus())).count();
 
-        double avgLatency = logs.stream().mapToLong(WebhookDeliveryLog::getLatencyMs).average().orElse(0.0);
+        double avgLatency = logs.stream().mapToLong(l -> l.getDurationMs() != null ? l.getDurationMs() : 0L).average().orElse(0.0);
 
         Map<String, Object> stats = new HashMap<>();
         stats.put("activeSubscriptions", activeSubs);
@@ -98,13 +98,15 @@ public class WebhookService {
                 long actualDuration = System.currentTimeMillis() - startTime;
 
                 WebhookDeliveryLog log = WebhookDeliveryLog.builder()
-                        .subscriptionId(target.getId())
-                        .payloadSample(payload.length() > 500 ? payload.substring(0, 500) + "..." : payload)
-                        .deliveryStatus(isFailed ? "FAILED" : "DELIVERED")
+                        .webhookConfigId(target.getId())
+                        .eventType(eventType)
+                        .targetUrl(target.getEndpointUrl())
+                        .payload(payload.length() > 500 ? payload.substring(0, 500) + "..." : payload)
+                        .status(isFailed ? "FAILED" : "DELIVERED")
                         .httpStatusCode(isFailed ? 503 : 200)
-                        .responseMessage(isFailed ? "Connection Refused / Gateway Timeout"
+                        .responseBody(isFailed ? "Connection Refused / Gateway Timeout"
                                 : "OK - Accepted Signature: " + signature.substring(0, 10) + "...")
-                        .latencyMs(actualDuration)
+                        .durationMs(actualDuration)
                         .build();
 
                 logRepository.save(log);
@@ -118,12 +120,15 @@ public class WebhookService {
                 // Cryptography or internal failure
                 long actualDuration = System.currentTimeMillis() - startTime;
                 WebhookDeliveryLog log = WebhookDeliveryLog.builder()
-                        .subscriptionId(target.getId())
-                        .payloadSample("ERROR GENERATING PAYLOAD")
-                        .deliveryStatus("FAILED")
+                        .webhookConfigId(target.getId())
+                        .eventType(eventType)
+                        .targetUrl(target.getEndpointUrl())
+                        .payload("ERROR GENERATING PAYLOAD")
+                        .status("FAILED")
                         .httpStatusCode(500)
-                        .responseMessage(e.getMessage())
-                        .latencyMs(actualDuration)
+                        .responseBody(e.getMessage())
+                        .durationMs(actualDuration)
+                        .errorMessage(e.getMessage())
                         .build();
                 logRepository.save(log);
                 failures++;

@@ -45,4 +45,16 @@ public class EmailTemplateController {
         }
         return ResponseEntity.notFound().build();
     }
+
+    /**
+     * Render a template by ID with variable substitutions.
+     */
+    @PostMapping("/{id}/render")
+    public ResponseEntity<String> renderTemplate(
+            @PathVariable Long id,
+            @RequestBody(required = false) java.util.Map<String, String> variables) {
+        return service.renderTemplate(id, variables != null ? variables : java.util.Map.of())
+                .map(ResponseEntity::ok)
+                .orElseGet(() -> ResponseEntity.notFound().build());
+    }
 }

@@ -8,11 +8,15 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.List;
 import java.util.Map;
+import java.util.HashMap;
+import java.util.Iterator;
 
 @Service
 public class EmailGeneratorService {
 
     private final WebClient webClient;
+    private final HtmlTemplateRepository htmlTemplateRepository;
+    private final CustomTemplateEngine customTemplateEngine;
 
     @Value("${groq.api.url:https://api.groq.com/openai/v1/chat/completions}")
     private String groqApiUrl;
@@ -38,11 +42,13 @@ public class EmailGeneratorService {
     @Value("${anthropic.api.key:}")
     private String anthropicApiKey;
 
-    public EmailGeneratorService(WebClient.Builder webClientBuilder) {
+    public EmailGeneratorService(WebClient.Builder webClientBuilder, HtmlTemplateRepository htmlTemplateRepository, CustomTemplateEngine customTemplateEngine) {
         this.webClient = webClientBuilder.build();
+        this.htmlTemplateRepository = htmlTemplateRepository;
+        this.customTemplateEngine = customTemplateEngine;
     }
 
-    public String generateEmailReply(EmailRequest emailRequest) {
+    public java.util.concurrent.CompletableFuture<String> generateEmailReplyAsync(EmailRequest emailRequest) {
         String provider = emailRequest.getProvider() != null ? emailRequest.getProvider().toLowerCase() : "groq";
         
         String apiUrl;
@@ -109,7 +115,7 @@ public class EmailGeneratorService {
                 defaultModel = "claude-3-5-sonnet-20241022";
                 provider = "claude";
             } else {
-                return generateLocalFallbackReply(emailRequest);
+                return java.util.concurrent.CompletableFuture.completedFuture(generateLocalFallbackReply(emailRequest));
             }
         }
 
@@ -137,31 +143,114 @@ public class EmailGeneratorService {
             );
         }
 
+        WebClient.RequestBodySpec requestSpec = webClient.post()
+                .uri(apiUrl)
+                .header("Content-Type", "application/json");
+
+        if ("claude".equals(provider)) {
+            requestSpec = requestSpec.header("x-api-key", apiKey)
+                    .header("anthropic-version", "2023-06-01");
+        } else {
+            requestSpec = requestSpec.header("Authorization", "Bearer " + apiKey);
+        }
+
+        final String finalProvider = provider;
+        return requestSpec.bodyValue(requestBody)
+                .retrieve()
+                .bodyToMono(String.class)
+                .timeout(java.time.Duration.ofSeconds(15))
+                .map(response -> extractResponseContent(response, finalProvider))
+                .onErrorMap(WebClientResponseException.class, e -> 
+                    new org.springframework.web.server.ResponseStatusException(
+                        org.springframework.http.HttpStatus.BAD_GATEWAY,
+                        finalProvider.toUpperCase() + " API error [" + e.getStatusCode() + "]: " + e.getResponseBodyAsString(), e))
+                .onErrorMap(e -> !(e instanceof org.springframework.web.server.ResponseStatusException), e ->
+                    new org.springframework.web.server.ResponseStatusException(
+                        org.springframework.http.HttpStatus.INTERNAL_SERVER_ERROR,
+                        "Unexpected error calling " + finalProvider.toUpperCase() + " API: " + e.getMessage(), e))
+                .toFuture()
+                .thenApply(response -> {
+                    if (emailRequest.getTemplateId() != null && !emailRequest.getTemplateId().trim().isEmpty()) {
+                        return applyTemplate(response, emailRequest.getTemplateId());
+                    }
+                    return response;
+                });
+    }
+
+    private String applyTemplate(String jsonResponse, String templateName) {
         try {
-            WebClient.RequestBodySpec requestSpec = webClient.post()
-                    .uri(apiUrl)
-                    .header("Content-Type", "application/json");
-
-            if ("claude".equals(provider)) {
-                requestSpec = requestSpec.header("x-api-key", apiKey)
-                        .header("anthropic-version", "2023-06-01");
-            } else {
-                requestSpec = requestSpec.header("Authorization", "Bearer " + apiKey);
+            HtmlTemplate template = htmlTemplateRepository.findByName(templateName)
+                    .orElseThrow(() -> new RuntimeException("Template not found: " + templateName));
+            
+            ObjectMapper mapper = new ObjectMapper();
+            JsonNode rootNode = mapper.readTree(jsonResponse);
+            
+            Map<String, String> variables = new HashMap<>();
+            Iterator<Map.Entry<String, JsonNode>> fields = rootNode.fields();
+            while (fields.hasNext()) {
+                Map.Entry<String, JsonNode> field = fields.next();
+                variables.put(field.getKey(), field.getValue().asText());
             }
+            
+            return customTemplateEngine.compile(template.getContent(), variables);
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to apply template: " + e.getMessage(), e);
+        }
+    }
 
-            String response = requestSpec.bodyValue(requestBody)
+    public String generateEmailSummary(EmailSummarizeRequest request) {
+        EmailRequest dummyRequest = new EmailRequest();
+        dummyRequest.setProvider(request.getProvider());
+        dummyRequest.setApiKey(request.getApiKey());
+        dummyRequest.setModel(request.getModel());
+        
+        // Temporarily override the buildPrompt logic by building it inline for summarization
+        String prompt = "You are an intelligent email summarization assistant. Summarize the following email thread concisely, extracting key action items and decisions:\n\n" + request.getThreadContent();
+        
+        try {
+            // We use generateEmailReplyAsync but we need to inject our custom prompt.
+            // Since buildPrompt is called inside generateEmailReplyAsync, it's easier to duplicate the WebClient call logic here or modify buildPrompt.
+            // To keep it simple, we'll construct a direct API call here.
+            
+            String provider = request.getProvider() != null ? request.getProvider().toLowerCase() : "groq";
+            String apiUrl = groqApiUrl;
+            String apiKey = (request.getApiKey() != null && !request.getApiKey().isEmpty()) ? request.getApiKey() : groqApiKey;
+            String model = "llama-3.3-70b-versatile";
+
+            if ("openai".equals(provider)) { apiUrl = openaiApiUrl; apiKey = openaiApiKey; model = "gpt-4o-mini"; }
+            if ("gemini".equals(provider)) { apiUrl = geminiApiUrl; apiKey = geminiApiKey; model = "gemini-2.5-flash"; }
+            
+            Map<String, Object> requestBody = Map.of(
+                    "model", model,
+                    "messages", List.of(Map.of("role", "user", "content", prompt))
+            );
+
+            return webClient.post()
+                    .uri(apiUrl)
+                    .header("Content-Type", "application/json")
+                    .header("Authorization", "Bearer " + apiKey)
+                    .bodyValue(requestBody)
                     .retrieve()
                     .bodyToMono(String.class)
-                    .block(java.time.Duration.ofSeconds(15));
-            return extractResponseContent(response, provider);
-        } catch (WebClientResponseException e) {
-            throw new org.springframework.web.server.ResponseStatusException(
-                org.springframework.http.HttpStatus.BAD_GATEWAY,
-                provider.toUpperCase() + " API error [" + e.getStatusCode() + "]: " + e.getResponseBodyAsString(), e);
+                    .map(response -> extractResponseContent(response, provider))
+                    .block();
         } catch (Exception e) {
-            throw new org.springframework.web.server.ResponseStatusException(
-                org.springframework.http.HttpStatus.INTERNAL_SERVER_ERROR,
-                "Unexpected error calling " + provider.toUpperCase() + " API: " + e.getMessage(), e);
+            throw new RuntimeException("Failed to generate summary: " + e.getMessage(), e);
+        }
+    }
+
+    public String generateEmailReply(EmailRequest emailRequest) {
+        try {
+            return generateEmailReplyAsync(emailRequest).join();
+        } catch (java.util.concurrent.CompletionException ce) {
+            Throwable cause = ce.getCause();
+            if (cause instanceof org.springframework.web.server.ResponseStatusException rse) {
+                throw rse;
+            }
+            if (cause instanceof RuntimeException re) {
+                throw re;
+            }
+            throw new RuntimeException(cause);
         }
     }
 
@@ -178,7 +267,7 @@ public class EmailGeneratorService {
         );
     }
 
-    private String extractResponseContent(String response, String provider) {
+    String extractResponseContent(String response, String provider) {
         try {
             ObjectMapper mapper = new ObjectMapper();
             JsonNode rootNode = mapper.readTree(response);
@@ -198,9 +287,11 @@ public class EmailGeneratorService {
         }
     }
 
-    private String buildPrompt(EmailRequest emailRequest) {
+    String buildPrompt(EmailRequest emailRequest) {
         StringBuilder prompt = new StringBuilder();
-        if (emailRequest.isComposeMode()) {
+        if (emailRequest.getTemplateId() != null && !emailRequest.getTemplateId().trim().isEmpty()) {
+            prompt.append("Respond strictly in valid JSON format. Provide the following fields: 'greeting', 'pitch', and 'closing'. Do not include any markdown formatting or explanations. ");
+        } else if (emailRequest.isComposeMode()) {
             prompt.append("Write a complete email based on the following instructions. ");
             prompt.append("Respond ONLY with the email body text. Do not include any subject lines, conversational prefixes, intros, explanations, or outros. The output must be ready to insert directly into the composer. ");
         } else {
@@ -211,21 +302,37 @@ public class EmailGeneratorService {
         if (emailRequest.getTone() != null && !emailRequest.getTone().trim().isEmpty()) {
             prompt.append("Use a ").append(emailRequest.getTone()).append(" tone. ");
         }
-        
+
         if (emailRequest.getLanguage() != null && !emailRequest.getLanguage().trim().isEmpty()) {
             prompt.append("Write the response strictly in ").append(emailRequest.getLanguage()).append(". ");
         }
+        
+        String rawContent = emailRequest.getEmailContent() != null ? emailRequest.getEmailContent() : "";
+        String rawInstructions = emailRequest.getCustomInstructions() != null ? emailRequest.getCustomInstructions().trim() : "";
 
-        if (emailRequest.getCustomInstructions() != null && !emailRequest.getCustomInstructions().trim().isEmpty()) {
+        if (emailRequest.getTemplateVariables() != null && !emailRequest.getTemplateVariables().isEmpty()) {
+            rawContent = com.email.writer.util.TemplateVariableReplacer.replaceVariables(rawContent, emailRequest.getTemplateVariables());
+            if (!rawInstructions.isEmpty()) {
+                rawInstructions = com.email.writer.util.TemplateVariableReplacer.replaceVariables(rawInstructions, emailRequest.getTemplateVariables());
+            }
+        }
+
+        if (emailRequest.getSubject() != null && !emailRequest.getSubject().trim().isEmpty()) {
+            prompt.append("\nEmail Subject / Topic: ")
+                  .append(emailRequest.getSubject().trim())
+                  .append("\n");
+        }
+
+        if (!rawInstructions.isEmpty()) {
             prompt.append("\nSpecific User Instructions / Context: ")
-                  .append(emailRequest.getCustomInstructions().trim())
+                  .append(rawInstructions)
                   .append("\n");
         }
         
         if (emailRequest.isComposeMode()) {
-            prompt.append("\nInstructions:\n").append(emailRequest.getEmailContent());
+            prompt.append("\nInstructions:\n").append(rawContent);
         } else {
-            prompt.append("\nOriginal email:\n").append(emailRequest.getEmailContent());
+            prompt.append("\nOriginal email:\n").append(rawContent);
         }
         return prompt.toString();
     }
